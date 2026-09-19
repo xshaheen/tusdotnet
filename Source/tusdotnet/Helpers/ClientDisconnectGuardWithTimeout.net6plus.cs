@@ -44,10 +44,7 @@ namespace tusdotnet.Helpers
             return res;
         }
 
-        private void ExecuteWithTimeout<TState>(
-            TState state,
-            Action<TState> operation
-        )
+        private void ExecuteWithTimeout<TState>(TState state, Action<TState> operation)
         {
             _cts.CancelAfter(_executionTimeout);
             operation(state);
