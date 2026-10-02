@@ -31,6 +31,8 @@ namespace tusdotnet.Extensions.Store
         /// persist this request's data. Throw a <see cref="Models.TusUploadConflictException"/>, or let an
         /// <see cref="System.OperationCanceledException"/> caused by this token propagate, to answer 409 Conflict.
         /// Returns <see cref="CancellationToken.None"/> unless the lock implements <see cref="Interfaces.ITusLeasedFileLock"/>.
+        /// Call it on the Stream passed to AppendDataAsync, not on a wrapper around it: a wrapper also returns
+        /// <see cref="CancellationToken.None"/>.
         /// </summary>
         /// <remarks>
         /// The lock can be lost right after the store checks the token. For correctness, use a conditional write
