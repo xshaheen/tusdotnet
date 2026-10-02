@@ -11,6 +11,7 @@ using tusdotnet.Extensions.Store;
 using tusdotnet.Interfaces;
 using tusdotnet.Models;
 using tusdotnet.test.Extensions;
+using tusdotnet.test.Helpers;
 using Xunit;
 #if pipelines
 using System.IO.Pipelines;
@@ -196,7 +197,73 @@ namespace tusdotnet.test.Tests
             );
         }
 
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task Returns_201_With_The_Committed_Offset_If_The_Lock_Is_Lost_During_Creation_With_Upload(
+            bool throwConflictException
+        )
+        {
+            var lockProvider = new LeasedFileLockProvider();
+            var store = MockStoreHelper.CreateWithExtensions<ITusCreationStore>();
+            ((ITusCreationStore)store)
+                .CreateFileAsync(100, null, CancellationToken.None)
+                .ReturnsForAnyArgs("testfile");
+            store.GetUploadLengthAsync("testfile", Arg.Any<CancellationToken>()).Returns(100);
+            store.GetUploadOffsetAsync("testfile", Arg.Any<CancellationToken>()).Returns(0);
+            store
+                .AppendDataAsync("testfile", Arg.Any<Stream>(), Arg.Any<CancellationToken>())
+                .Returns<Task<long>>(call =>
+                {
+                    var lockLostToken = call.Arg<Stream>().GetFileLockLostToken();
+                    lockProvider.LoseLock();
+
+                    if (throwConflictException)
+                        throw new TusUploadConflictException(
+                            "Upload was modified by another request"
+                        );
+
+                    lockLostToken.ThrowIfCancellationRequested();
+                    return Task.FromResult(3L);
+                });
+
+            using var server = CreateServer(store, lockProvider);
+
+            var response = await server
+                .CreateTusResumableRequest("/files")
+                .AddHeader("Upload-Length", "100")
+                .AddBody()
+                .PostAsync();
+
+            // The file was created, so the client gets its location and resumes from the committed offset.
+            response.StatusCode.ShouldBe(HttpStatusCode.Created);
+            response.ShouldContainHeader("Upload-Offset", "0");
+            response.Headers.Location.ShouldNotBeNull();
+        }
+
 #if pipelines
+
+        [Fact]
+        public async Task GetFileLockLostToken_Returns_None_When_The_Lock_Cannot_Be_Lost_For_Pipelines()
+        {
+            var store = (ITusPipelineStore)
+                Substitute.For<ITusPipelineStore>().WithExistingFile("testfile", 10, 5);
+            CancellationToken? observedToken = null;
+            store
+                .AppendDataAsync("testfile", Arg.Any<PipeReader>(), Arg.Any<CancellationToken>())
+                .Returns(call =>
+                {
+                    observedToken = call.Arg<PipeReader>().GetFileLockLostToken();
+                    return 3;
+                });
+
+            using var server = TestServerFactory.Create(store, usePipelinesIfAvailable: true);
+
+            var response = await SendPatch(server);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            observedToken.ShouldBe(CancellationToken.None);
+        }
 
         [Fact]
         public async Task GetFileLockLostToken_Returns_The_Token_Of_A_Leased_Lock_For_Pipelines()
