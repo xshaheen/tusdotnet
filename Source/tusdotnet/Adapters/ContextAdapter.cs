@@ -33,6 +33,12 @@ namespace tusdotnet.Adapters
 
         public ClientDisconnectGuardWithTimeout ClientDisconnectGuard { get; private set; }
 
+        /// <summary>
+        /// Cancelled when the file lock held by the current intent is lost.
+        /// <see cref="CancellationToken.None"/> if no lock is held or the lock cannot be lost.
+        /// </summary>
+        public CancellationToken FileLockLostToken { get; set; }
+
         private StoreAdapter _storeAdapter;
         public StoreAdapter StoreAdapter
         {
