@@ -117,6 +117,46 @@ namespace tusdotnet.test.Tests
         }
 
         [Fact]
+        public async Task Returns_409_If_A_Read_Is_Cancelled_Because_The_Lock_Was_Lost()
+        {
+            var lockProvider = new LeasedFileLockProvider();
+            var store = Substitute.For<ITusStore>().WithExistingFile("testfile", 10, 5);
+            var persisted = false;
+            store
+                .AppendDataAsync("testfile", Arg.Any<Stream>(), Arg.Any<CancellationToken>())
+                .Returns<Task<long>>(async call =>
+                {
+                    var stream = call.Arg<Stream>();
+                    lockProvider.LoseLock();
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(
+                        call.Arg<CancellationToken>(),
+                        stream.GetFileLockLostToken()
+                    );
+
+                    var buffer = new byte[10];
+                    long totalRead = 0;
+                    int read;
+                    while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, cts.Token)) > 0)
+                    {
+                        totalRead += read;
+                    }
+
+                    persisted = true;
+                    return totalRead;
+                });
+
+            using var server = CreateServer(store, lockProvider);
+
+            var response = await SendPatch(server);
+
+            await response.ShouldBeErrorResponse(
+                HttpStatusCode.Conflict,
+                "The file lock was lost while the file was being updated. Please try again"
+            );
+            persisted.ShouldBeFalse();
+        }
+
+        [Fact]
         public async Task Does_Not_Return_409_For_Cancellations_Unrelated_To_The_Lock()
         {
             var lockProvider = new LeasedFileLockProvider();
@@ -207,6 +247,52 @@ namespace tusdotnet.test.Tests
                 HttpStatusCode.Conflict,
                 "The file lock was lost while the file was being updated. Please try again"
             );
+        }
+
+        [Fact]
+        public async Task Returns_409_If_A_Read_Is_Cancelled_Because_The_Lock_Was_Lost_For_Pipelines()
+        {
+            var lockProvider = new LeasedFileLockProvider();
+            var store = (ITusPipelineStore)
+                Substitute.For<ITusPipelineStore>().WithExistingFile("testfile", 10, 5);
+            var persisted = false;
+            store
+                .AppendDataAsync("testfile", Arg.Any<PipeReader>(), Arg.Any<CancellationToken>())
+                .Returns<Task<long>>(async call =>
+                {
+                    var reader = call.Arg<PipeReader>();
+                    lockProvider.LoseLock();
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(
+                        call.Arg<CancellationToken>(),
+                        reader.GetFileLockLostToken()
+                    );
+
+                    long totalRead = 0;
+                    while (true)
+                    {
+                        var result = await reader.ReadAsync(cts.Token);
+                        totalRead += result.Buffer.Length;
+                        reader.AdvanceTo(result.Buffer.End);
+
+                        if (result.IsCanceled || result.IsCompleted)
+                        {
+                            break;
+                        }
+                    }
+
+                    persisted = true;
+                    return totalRead;
+                });
+
+            using var server = CreateServer(store, lockProvider, usePipelines: true);
+
+            var response = await SendPatch(server);
+
+            await response.ShouldBeErrorResponse(
+                HttpStatusCode.Conflict,
+                "The file lock was lost while the file was being updated. Please try again"
+            );
+            persisted.ShouldBeFalse();
         }
 #endif
 
