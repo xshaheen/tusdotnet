@@ -32,13 +32,14 @@ namespace tusdotnet.Extensions.Store
         /// persist this request's data. Throw a <see cref="Models.TusUploadConflictException"/>, or let an
         /// <see cref="System.OperationCanceledException"/> caused by this token propagate, to answer 409 Conflict.
         /// Returns <see cref="CancellationToken.None"/> unless the lock implements <see cref="Interfaces.ITusLeasedFileLock"/>.
-        /// Call it on the PipeReader passed to AppendDataAsync, not on a wrapper around it: a wrapper also returns
+        /// Call it on the PipeReader passed to AppendDataAsync, not on a wrapper around it: a wrapper returns
         /// <see cref="CancellationToken.None"/>.
         /// </summary>
         /// <remarks>
-        /// The lock can be lost right after the store checks the token. For correctness, use a conditional write
-        /// against the storage (e.g. an ETag precondition) and throw <see cref="Models.TusUploadConflictException"/>
-        /// when it fails.
+        /// Once the lock is lost, reads from the body throw, so a store that ignores this token still stops.
+        /// This does not undo data the store already wrote, and the lock can be lost right after the store checks
+        /// the token. To reject a stale write reliably, use a conditional write against the storage (e.g. an ETag
+        /// precondition) and throw <see cref="Models.TusUploadConflictException"/> when it fails.
         /// </remarks>
         /// <param name="pipeReader">The PipeReader provided to AppendDataAsync</param>
         /// <returns>The token that is cancelled when the file lock is lost, or <see cref="CancellationToken.None"/></returns>

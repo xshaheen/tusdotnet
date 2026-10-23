@@ -17,12 +17,21 @@ namespace tusdotnet.Models.PipeReaders
                 context.ClientDisconnectGuard
             );
 
+            reader = WrapWithFileLockLost(reader, context);
             reader = await WrapWithMaxSize(reader, context);
             reader = WrapWithChecksumInfo(reader, context);
 
             FileLockLostTokenRegistry.Register(reader, context.FileLockLostToken);
 
             return reader;
+        }
+
+        private static PipeReader WrapWithFileLockLost(PipeReader reader, ContextAdapter context)
+        {
+            // Wrap the disconnect guard directly, so the store and every outer guard see a lost lock as an exception.
+            return context.FileLockLostToken.CanBeCanceled
+                ? new FileLockLostGuardedPipeReader(reader, context.FileLockLostToken)
+                : reader;
         }
 
         private static async Task<PipeReader> WrapWithMaxSize(

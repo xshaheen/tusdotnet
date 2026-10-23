@@ -158,6 +158,63 @@ namespace tusdotnet.test.Tests
         }
 
         [Fact]
+        public async Task Returns_409_If_A_Store_That_Ignores_The_Lock_Reads_After_The_Lock_Is_Lost()
+        {
+            var lockProvider = new LeasedFileLockProvider();
+            var store = Substitute.For<ITusStore>().WithExistingFile("testfile", 10, 5);
+            var persisted = false;
+            store
+                .AppendDataAsync("testfile", Arg.Any<Stream>(), Arg.Any<CancellationToken>())
+                .Returns<Task<long>>(async call =>
+                {
+                    // Like a store written before the lock-lost token was added, this store never reads it.
+                    var stream = call.Arg<Stream>();
+                    lockProvider.LoseLock();
+
+                    var totalRead = await ReadToEnd(stream, call.Arg<CancellationToken>());
+
+                    persisted = true;
+                    return totalRead;
+                });
+
+            using var server = CreateServer(store, lockProvider);
+
+            var response = await SendPatch(server);
+
+            await response.ShouldBeErrorResponse(
+                HttpStatusCode.Conflict,
+                "The file lock was lost while the file was being updated. Please try again"
+            );
+            persisted.ShouldBeFalse();
+        }
+
+        [Fact]
+        public async Task Reads_The_Whole_Body_While_A_Leased_Lock_Is_Held()
+        {
+            var lockProvider = new LeasedFileLockProvider();
+            var store = Substitute.For<ITusStore>().WithExistingFile("testfile", 10, 5);
+            long totalRead = 0;
+            var observedToken = CancellationToken.None;
+            store
+                .AppendDataAsync("testfile", Arg.Any<Stream>(), Arg.Any<CancellationToken>())
+                .Returns<Task<long>>(async call =>
+                {
+                    var stream = call.Arg<Stream>();
+                    observedToken = stream.GetFileLockLostToken();
+                    totalRead = await ReadToEnd(stream, call.Arg<CancellationToken>());
+                    return totalRead;
+                });
+
+            using var server = CreateServer(store, lockProvider);
+
+            var response = await SendPatch(server);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.NoContent);
+            totalRead.ShouldBe(BodySize);
+            observedToken.CanBeCanceled.ShouldBeTrue();
+        }
+
+        [Fact]
         public async Task Does_Not_Return_409_For_Cancellations_Unrelated_To_The_Lock()
         {
             var lockProvider = new LeasedFileLockProvider();
@@ -361,6 +418,49 @@ namespace tusdotnet.test.Tests
             );
             persisted.ShouldBeFalse();
         }
+
+        [Fact]
+        public async Task Returns_409_If_A_Store_That_Ignores_The_Lock_Reads_After_The_Lock_Is_Lost_For_Pipelines()
+        {
+            var lockProvider = new LeasedFileLockProvider();
+            var store = (ITusPipelineStore)
+                Substitute.For<ITusPipelineStore>().WithExistingFile("testfile", 10, 5);
+            var persisted = false;
+            store
+                .AppendDataAsync("testfile", Arg.Any<PipeReader>(), Arg.Any<CancellationToken>())
+                .Returns<Task<long>>(async call =>
+                {
+                    // Like a store written before the lock-lost token was added, this store never reads it.
+                    var reader = call.Arg<PipeReader>();
+                    lockProvider.LoseLock();
+
+                    long totalRead = 0;
+                    while (true)
+                    {
+                        var result = await reader.ReadAsync(call.Arg<CancellationToken>());
+                        totalRead += result.Buffer.Length;
+                        reader.AdvanceTo(result.Buffer.End);
+
+                        if (result.IsCanceled || result.IsCompleted)
+                        {
+                            break;
+                        }
+                    }
+
+                    persisted = true;
+                    return totalRead;
+                });
+
+            using var server = CreateServer(store, lockProvider, usePipelines: true);
+
+            var response = await SendPatch(server);
+
+            await response.ShouldBeErrorResponse(
+                HttpStatusCode.Conflict,
+                "The file lock was lost while the file was being updated. Please try again"
+            );
+            persisted.ShouldBeFalse();
+        }
 #endif
 
         private static TestServer CreateServer(
@@ -380,6 +480,25 @@ namespace tusdotnet.test.Tests
 #endif
                 }
             );
+        }
+
+        // The default body size of AddBody().
+        private const long BodySize = 3;
+
+        private static async Task<long> ReadToEnd(
+            Stream stream,
+            CancellationToken cancellationToken
+        )
+        {
+            var buffer = new byte[10];
+            long totalRead = 0;
+            int read;
+            while ((read = await stream.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
+            {
+                totalRead += read;
+            }
+
+            return totalRead;
         }
 
         private static Task<HttpResponseMessage> SendPatch(TestServer server)

@@ -7,11 +7,14 @@ namespace tusdotnet.Interfaces
     /// lease or by a database connection.
     /// </summary>
     /// <remarks>
-    /// A lost lock does not stop the request, and another request may acquire the lock while this one still
-    /// writes. Only the store can reject the stale write: it reads the token with <c>GetFileLockLostToken()</c>
-    /// in <c>AppendDataAsync</c>, or better, uses a conditional write against the storage.
-    /// tusdotnet still calls <see cref="ITusFileLock.ReleaseIfHeld"/> after the lock is lost, so release only a lock
-    /// this instance still owns (e.g. by comparing the lease owner), or it removes the lock another request now holds.
+    /// Another request may acquire a lost lock while this one still writes. Once the lock is lost, tusdotnet stops
+    /// reading the request body: the next read, or a read in progress, throws and the request answers 409 Conflict.
+    /// This cannot undo data the store wrote before the lock was lost. Only the store can reject that write: it
+    /// checks <c>GetFileLockLostToken()</c> in <c>AppendDataAsync</c>, or, more reliably, uses a conditional write
+    /// against the storage.
+    /// tusdotnet still calls <see cref="ITusFileLock.ReleaseIfHeld"/> after the lock is lost. Release only a lock
+    /// this instance still owns (e.g. compare the lease owner); otherwise the release removes the lock that another
+    /// request now holds.
     /// </remarks>
     public interface ITusLeasedFileLock : ITusFileLock
     {

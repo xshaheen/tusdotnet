@@ -31,8 +31,8 @@ namespace tusdotnet.Extensions
 
         internal static void UploadConflict(this ResponseAdapter response, string message)
         {
-            // The protocol answers a stale Upload-Offset with 409, and a client whose upload another request
-            // modified has a stale offset. Clients resume with HEAD on a 409.
+            // The tus protocol answers a stale Upload-Offset with 409. When another request changed the upload,
+            // this client's offset is stale too, and a client resumes with HEAD after a 409.
             response.Error(HttpStatusCode.Conflict, message);
         }
 

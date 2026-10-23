@@ -111,9 +111,7 @@ namespace tusdotnet
             {
                 // The store stopped because the lock was lost. Another request may own the file now,
                 // so the client must re-read the offset instead of trusting what this request wrote.
-                context.Response.UploadConflict(
-                    "The file lock was lost while the file was being updated. Please try again"
-                );
+                context.Response.UploadConflict(FileLockLostException.DefaultMessage);
                 return ResultType.StopExecution;
             }
             catch (TusUploadConflictException conflictException)

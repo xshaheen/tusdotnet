@@ -166,6 +166,8 @@ The library includes a locking mechanism (`ITusFileLockProvider`) to handle conc
 
 A distributed lock can be lost while a request holds it, e.g. when its lease expires during a process pause or the lock backend fails over. Another request can then acquire the lock while the first one is still writing. Locks that can be lost implement `ITusLeasedFileLock`, which exposes a `LockLostToken`. Stores read it in `AppendDataAsync` with `GetFileLockLostToken()` on the `Stream` or `PipeReader` they receive.
 
+Once the lock is lost, tusdotnet stops reading the request body. The next read, or a read in progress, throws and the request answers `409 Conflict`. This protects stores that do not read the token, but it cannot undo data the store wrote before the lock was lost.
+
 The token tells the store that the lock is gone. It cannot stop a write that already passed its check. Only the store can reject a stale write, ideally with a conditional write against the storage (e.g. an ETag precondition). To reject a write, the store throws `TusUploadConflictException` or lets an `OperationCanceledException` caused by the lock-lost token propagate. Both result in `409 Conflict`, and the client then sends HEAD and resumes from the committed offset.
 
 The lock-lost token is separate from the request's cancellation token on purpose. Stores treat a cancelled request as a client disconnect and persist the data received so far, which is the wrong reaction to a lost lock.

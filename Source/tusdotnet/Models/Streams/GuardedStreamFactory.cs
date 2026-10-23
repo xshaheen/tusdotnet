@@ -17,12 +17,21 @@ namespace tusdotnet.IntentHandlers
                 context.ClientDisconnectGuard
             );
 
+            guardedStream = WrapWithFileLockLost(guardedStream, context);
             guardedStream = await WrapWithMaxSize(guardedStream, context);
             guardedStream = WrapWithChecksumInfo(guardedStream, context);
 
             FileLockLostTokenRegistry.Register(guardedStream, context.FileLockLostToken);
 
             return guardedStream;
+        }
+
+        private static Stream WrapWithFileLockLost(Stream stream, ContextAdapter context)
+        {
+            // Wrap the disconnect guard directly, so the store and every outer guard see a lost lock as an exception.
+            return context.FileLockLostToken.CanBeCanceled
+                ? new FileLockLostGuardedReadOnlyStream(stream, context.FileLockLostToken)
+                : stream;
         }
 
         private static async Task<Stream> WrapWithMaxSize(Stream stream, ContextAdapter context)

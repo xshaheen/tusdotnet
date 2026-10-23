@@ -98,8 +98,9 @@ namespace tusdotnet.Helpers
         {
             if (cancellationToken.IsCancellationRequested)
             {
-                // A store that cancels its read because the lock was lost must see the exception so that
-                // the runner answers 409. Swallowing it would look like end of body and persist a partial write.
+                // Rethrow a read cancelled because the lock was lost, whether the store or the lock-lost guard
+                // cancelled it, so the runner answers 409. Swallowed, it looks like the end of the body and the store
+                // saves a partial write.
                 return _cts.IsCancellationRequested || !FileLockLostToken.IsCancellationRequested;
             }
 
